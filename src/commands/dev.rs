@@ -26,10 +26,6 @@ impl DevCommand {
         watch(&target_path);
 
         thread::sleep(Duration::from_secs(20));
-
-        // for event in watcher.iter() {
-        //     println!("------\n {event:#?}");
-        // }
     }
 
     pub fn send_update() {

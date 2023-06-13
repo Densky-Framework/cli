@@ -19,7 +19,6 @@ pub fn walk_dir(
     let mut files = HashMap::default();
     let mut childs = HashMap::default();
     let dir = fs::read_dir(&cwd).unwrap();
-    // let dir = RecursiveDirIterator::from_root(&cwd).unwrap();
 
     for entry in dir.filter_map(Result::ok) {
         let entry = entry.path();
