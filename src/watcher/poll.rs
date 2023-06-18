@@ -1,11 +1,16 @@
 use std::cell::RefCell;
+use std::fs;
+use std::io;
 use std::os::unix::prelude::MetadataExt;
-use std::rc::Rc;
-use std::{fs, path::PathBuf, thread, time::Duration};
+use std::path::PathBuf;
+use std::sync::mpsc::Receiver;
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use ahash::{HashMap, HashSet};
 
-use super::utils::walk_dir;
+use super::utils::{walk_dir, DirIterator};
 use super::MAIN_HASHER;
 
 #[derive(Debug)]
@@ -22,25 +27,25 @@ static FILE_SIZE_THRESHOLD: u64 = MEGABYTE * 20;
 #[derive(Debug)]
 pub struct WatchEvent {
     pub kind: WatchKind,
-    pub is_dir: bool,
     pub path: PathBuf,
 }
 
 #[derive(Debug)]
 pub struct PollWatcher {
+    will_drop: bool,
     folder: PathBuf,
-    childs: RefCell<HashMap<PathBuf, Rc<RefCell<PollWatcher>>>>,
     files: RefCell<HashMap<PathBuf, u64>>,
 }
 
 impl PollWatcher {
-    pub fn new(folder: PathBuf) -> PollWatcher {
-        let (childs, files) = walk_dir(&folder);
-        PollWatcher {
+    pub fn new(folder: PathBuf) -> io::Result<PollWatcher> {
+        let files = walk_dir(&folder)?;
+
+        Ok(PollWatcher {
+            will_drop: false,
             folder,
             files: RefCell::new(files),
-            childs: RefCell::new(childs),
-        }
+        })
     }
 
     pub fn get_hash_with_size(path: &PathBuf, size: u64) -> u64 {
@@ -51,7 +56,7 @@ impl PollWatcher {
                 Ok(c) => c,
                 Err(_) => return 0,
             };
-            MAIN_HASHER.hash_one(c)
+            MAIN_HASHER.with(|m| m.hash_one(c))
         }
     }
 
@@ -66,20 +71,11 @@ impl PollWatcher {
 
     pub fn poll(&mut self) -> Vec<WatchEvent> {
         let a = fs::read_dir(&self.folder).unwrap();
-        let a = a.filter_map(Result::ok);
+        let a = DirIterator::new(a);
 
-        let dirs = self.childs.borrow();
-        let mut removed_dirs: HashSet<PathBuf> = HashSet::default();
-        for d in dirs.keys() {
-            removed_dirs.insert(d.clone());
-        }
-        drop(dirs);
-        let files = self.files.borrow();
-        let mut removed_files: HashSet<PathBuf> = HashSet::default();
-        for f in files.keys() {
-            removed_files.insert(f.clone());
-        }
-        drop(files);
+        let removed_files = self.files.borrow().iter().map(|(path, _)| path.clone()).collect();
+        let mut removed_files: HashSet<PathBuf> = HashSet::from(removed_files);
+
         let mut events = Vec::new();
         for entry in a {
             let path = entry.path();
@@ -87,32 +83,7 @@ impl PollWatcher {
                 continue;
             }
 
-            let (is_dir, size) = match entry.metadata() {
-                Err(_) => (false, 0),
-                Ok(m) => (m.is_dir(), m.size()),
-            };
-
-            if is_dir {
-                removed_dirs.remove(&path);
-                if let Some(child) = self.childs.borrow().get(&path) {
-                    let mut diff = child.borrow_mut().poll();
-                    events.append(&mut diff);
-                } else {
-                    self.childs.borrow_mut().insert(
-                        path.clone(),
-                        Rc::new(RefCell::new(PollWatcher::new(path.clone()))),
-                    );
-                    events.push(WatchEvent {
-                        kind: WatchKind::Create,
-                        is_dir: true,
-                        path,
-                    });
-                }
-
-                continue;
-            }
-
-            let file_hash = Self::get_hash_with_size(&path, size);
+            let file_hash = Self::get_hash(&path);
 
             removed_files.remove(&path);
 
@@ -122,7 +93,6 @@ impl PollWatcher {
                     files.insert(path.clone(), file_hash);
                     events.push(WatchEvent {
                         kind: WatchKind::Modify,
-                        is_dir: false,
                         path,
                     });
                 }
@@ -130,7 +100,6 @@ impl PollWatcher {
                 files.insert(path.clone(), file_hash);
                 events.push(WatchEvent {
                     kind: WatchKind::Create,
-                    is_dir: false,
                     path,
                 });
             }
@@ -140,17 +109,8 @@ impl PollWatcher {
             self.files.borrow_mut().remove(&entry);
             events.push(WatchEvent {
                 kind: WatchKind::Remove,
-                is_dir: false,
                 path: entry.into(),
             });
-        }
-        for entry in removed_dirs {
-            self.childs.borrow_mut().remove(&entry);
-            events.push(WatchEvent {
-                kind: WatchKind::Remove,
-                is_dir: true,
-                path: entry.into(),
-            })
         }
 
         events
@@ -167,16 +127,51 @@ impl PollWatcher {
         !is_nvim_cache && !is_nvim_file && !is_output
     }
 
-    pub fn scheduling_poll<F>(&mut self, interval: Duration, mut f: F)
+    pub fn scheduling_poll<F>(&mut self, interval: Duration, rx: Receiver<()>, mut f: F)
     where
         F: FnMut(Vec<WatchEvent>),
     {
-        loop {
-            let r = self.poll();
-            if r.len() != 0 {
-                f(r);
+        let mut time_elapsed = Duration::ZERO;
+
+        let will_drop = Arc::new(Mutex::new(false));
+
+        let thread_will_drop = Arc::clone(&will_drop);
+        thread::spawn(move || loop {
+            if let Ok(_) = rx.recv() {
+                println!("[PollWatcher] Shutdown...");
+                let mut a = thread_will_drop.lock().unwrap();
+                *a = true;
+                break;
             }
-            thread::sleep(interval);
+        });
+
+        loop {
+            let time = Instant::now();
+
+            if *will_drop.lock().unwrap() {
+                println!("[PollWatcher] Shutdown");
+                break;
+            }
+
+            if time_elapsed >= interval {
+                time_elapsed = Duration::ZERO;
+
+                let r = self.poll();
+                if r.len() != 0 {
+                    f(r);
+                }
+            }
+
+            let elapsed = time.duration_since(Instant::now());
+            let sleep_time = 50 - elapsed.as_millis() as u64;
+            time_elapsed += Duration::from_millis(50);
+            thread::sleep(Duration::from_millis(sleep_time));
         }
+    }
+}
+
+impl Drop for PollWatcher {
+    fn drop(&mut self) {
+        self.will_drop = true;
     }
 }

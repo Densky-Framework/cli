@@ -1,9 +1,9 @@
-use std::{path::PathBuf, thread, time::Duration};
+use std::{path::PathBuf, sync::mpsc, thread, time::Duration};
 
 use clap::{arg, value_parser, ArgMatches, Command, ValueHint};
 use densky_core::utils::join_paths;
 
-use crate::watcher::watch;
+use crate::watcher::PollWatcher;
 
 pub struct DevCommand;
 
@@ -23,9 +23,18 @@ impl DevCommand {
         let target_path: PathBuf = join_paths(folder, cwd).into();
 
         println!("Running on {}", target_path.display());
-        watch(&target_path);
 
-        thread::sleep(Duration::from_secs(20));
+        let (tx, rx) = mpsc::channel();
+
+        let watching = thread::spawn(move || {
+            let mut poll = PollWatcher::new(target_path).unwrap();
+            poll.scheduling_poll(Duration::from_millis(500), rx, |x| println!("{x:#?}"))
+        });
+
+        thread::sleep(Duration::from_secs(10));
+
+        let _ = tx.send(());
+        let _ = watching.join();
     }
 
     pub fn send_update() {
