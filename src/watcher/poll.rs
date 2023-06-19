@@ -4,7 +4,6 @@ use std::io;
 use std::os::unix::prelude::MetadataExt;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
-use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -73,7 +72,12 @@ impl PollWatcher {
         let a = fs::read_dir(&self.folder).unwrap();
         let a = DirIterator::new(a);
 
-        let removed_files = self.files.borrow().iter().map(|(path, _)| path.clone()).collect();
+        let removed_files = self
+            .files
+            .borrow()
+            .iter()
+            .map(|(path, _)| path.clone())
+            .collect();
         let mut removed_files: HashSet<PathBuf> = HashSet::from(removed_files);
 
         let mut events = Vec::new();
@@ -133,22 +137,10 @@ impl PollWatcher {
     {
         let mut time_elapsed = Duration::ZERO;
 
-        let will_drop = Arc::new(Mutex::new(false));
-
-        let thread_will_drop = Arc::clone(&will_drop);
-        thread::spawn(move || loop {
-            if let Ok(_) = rx.recv() {
-                println!("[PollWatcher] Shutdown...");
-                let mut a = thread_will_drop.lock().unwrap();
-                *a = true;
-                break;
-            }
-        });
-
         loop {
             let time = Instant::now();
 
-            if *will_drop.lock().unwrap() {
+            if let Ok(_) = rx.recv_timeout(Duration::from_millis(1)) {
                 println!("[PollWatcher] Shutdown");
                 break;
             }
@@ -162,10 +154,10 @@ impl PollWatcher {
                 }
             }
 
-            let elapsed = time.duration_since(Instant::now());
+            let elapsed = Instant::now().duration_since(time);
             let sleep_time = 50 - elapsed.as_millis() as u64;
-            time_elapsed += Duration::from_millis(50);
             thread::sleep(Duration::from_millis(sleep_time));
+            time_elapsed += Instant::now().duration_since(time);
         }
     }
 }
