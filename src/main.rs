@@ -1,6 +1,7 @@
 extern crate anstyle;
 
 pub mod commands;
+pub mod compiler;
 pub mod watcher;
 
 use anstyle::{AnsiColor, Color, Style};
