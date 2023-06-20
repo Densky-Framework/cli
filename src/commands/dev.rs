@@ -16,9 +16,10 @@ use densky_core::{
     utils::{join_paths, Fmt},
     CompileContext,
 };
+use indicatif::{ProgressBar, ProgressStyle};
 
-use crate::compiler::{process_http, process_view};
-use crate::watcher::PollWatcher;
+use crate::compiler::{process_http, process_view, write_aux_files};
+use crate::watcher::{PollWatcher, WatchKind};
 
 pub struct DevCommand;
 
@@ -49,39 +50,69 @@ impl DevCommand {
             })
         });
 
-        let mut deno = process::Command::new("deno")
-            .args(["run", "-A"])
-            .arg(format!("{}/main.ts", target_path.display()))
-            .spawn()
-            .expect("deno command failed to run");
-
+        let (first_build_tx, first_build_rx) = mpsc::sync_channel(1);
+        let target_path_main = target_path.clone();
         let main = thread::spawn(move || -> Option<()> {
             let compile_context = CompileContext {
-                output_dir: join_paths(".densky", &target_path),
-                routes_path: join_paths("src/routes", &target_path),
-                views_path: join_paths("src/views", &target_path),
-                static_path: join_paths("src/static", &target_path),
+                output_dir: join_paths(".densky", &target_path_main),
+                routes_path: join_paths("src/routes", &target_path_main),
+                views_path: join_paths("src/views", &target_path_main),
+                static_path: join_paths("src/static", &target_path_main),
                 verbose: true,
                 static_prefix: "static/".to_owned(),
             };
 
+            let progress = ProgressBar::new_spinner()
+                .with_message("Discovering")
+                .with_style(
+                    ProgressStyle::with_template("{spinner:.cyan} {msg:.bright.blue}")
+                        .unwrap()
+                        .tick_chars("⠁⠉⠙⠚⠒⠂⠂⠒⠲⠴⠤⠄⠄⠤⠠⠠⠤⠦⠖⠒⠐⠐⠒⠓⠋⠉✓"),
+                );
+
+            match write_aux_files(&compile_context) {
+                Ok(_) => (),
+                Err(_) => {
+                    first_build_tx.send(false);
+                    return None;
+                }
+            };
+
             let (mut http_container, http_tree) = http_discover(&compile_context).ok()?;
+            progress.tick();
             let views = view_discover(&compile_context);
 
-            println!(
-                "{}\n",
-                Fmt(|f| http_tree.lock().unwrap().display(f, &http_container))
-            );
+            progress.finish();
 
-            process_http(http_tree.clone(), &mut http_container);
+            let progress = ProgressBar::new(http_container.id_tree() as u64)
+                .with_message("Compiling")
+                .with_style(
+                    ProgressStyle::with_template(
+                        "{human_pos:.green} / {human_len:.red} {msg:15} {wide_bar:.cyan/blue}",
+                    )
+                    .unwrap()
+                    .progress_chars("##-"),
+                );
+
+            process_http(
+                http_tree.clone(),
+                &mut http_container,
+                Some(progress.clone()),
+            );
+            progress.finish();
             for view in views {
                 process_view(view);
             }
+            let _ = first_build_tx.send(true);
+
+            println!(
+                "\x1B[2J\x1B[1;1H{}\n",
+                Fmt(|f| http_tree.lock().unwrap().display(f, &http_container))
+            );
 
             '_loop: loop {
                 if let Ok(event) = watch_event_rx.recv_timeout(Duration::from_millis(10)) {
-                    DevCommand::send_update(event.iter().map(|e| &e.path));
-                    println!("[Debug] {event:#?}");
+                    DevCommand::send_update(event.iter().map(|e| (e.kind.clone(), &e.path)));
                 }
 
                 if let Ok(_) = shutdown_rx_main.recv_timeout(Duration::from_millis(1)) {
@@ -92,6 +123,20 @@ impl DevCommand {
 
             None
         });
+
+        let shutdown_threads = move || (shutdown_threads().unwrap(), watching.join().unwrap(), main.join().unwrap());
+
+        let successful = first_build_rx.recv().unwrap();
+        if !successful {
+            let _ = shutdown_threads();
+            return;
+        }
+
+        let mut deno = process::Command::new("deno")
+            .args(["run", "-A"])
+            .arg(format!("{}/.densky/dev.ts", target_path.display()))
+            .spawn()
+            .expect("deno command failed to run");
 
         let term = Arc::new(AtomicBool::new(false));
         let sigint =
@@ -104,19 +149,27 @@ impl DevCommand {
         assert!(signal_hook::low_level::unregister(sigint));
 
         let _ = deno.kill();
-        let _ = (shutdown_threads(), watching.join(), main.join());
+        let _ = shutdown_threads();
     }
 
     pub fn send_update<I, P>(files: I)
     where
-        I: Iterator<Item = P>,
+        I: Iterator<Item = (WatchKind, P)>,
         P: AsRef<OsStr>,
     {
         let mut files_json = "[".to_owned();
         for file in files {
-            files_json += "\"";
-            files_json += file.as_ref().to_str().unwrap();
-            files_json += "\",";
+            use WatchKind::*;
+            let kind = match file.0 {
+                Create => "create",
+                Remove => "remove",
+                Modify => "modify",
+            };
+            files_json += "[\"";
+            files_json += kind;
+            files_json += "\",\"";
+            files_json += file.1.as_ref().to_str().unwrap();
+            files_json += "\"],";
         }
         files_json.pop();
         files_json += "]";

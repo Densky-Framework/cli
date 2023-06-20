@@ -12,12 +12,11 @@ use ahash::{HashMap, HashSet};
 use super::utils::{walk_dir, DirIterator};
 use super::MAIN_HASHER;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum WatchKind {
     Create,
     Remove,
     Modify,
-    Rename(PathBuf),
 }
 
 static MEGABYTE: u64 = 1000000;
@@ -154,10 +153,10 @@ impl PollWatcher {
                 }
             }
 
-            let elapsed = Instant::now().duration_since(time);
-            let sleep_time = 50 - elapsed.as_millis() as u64;
-            thread::sleep(Duration::from_millis(sleep_time));
-            time_elapsed += Instant::now().duration_since(time);
+            let elapsed = time.elapsed();
+            let sleep_time = 50u64.wrapping_sub(elapsed.as_millis() as u64);
+            thread::sleep(Duration::from_millis(sleep_time as u64));
+            time_elapsed += time.elapsed();
         }
     }
 }
