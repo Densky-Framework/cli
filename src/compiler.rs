@@ -5,7 +5,7 @@ use std::{
 
 use densky_core::{
     http::{HttpLeaf, HttpTree},
-    utils::join_paths,
+    utils::{import, import_filename, join_paths},
     views::ViewLeaf,
     walker::{WalkerContainer, WalkerLeaf, WalkerTree},
     CompileContext,
@@ -17,18 +17,18 @@ pub fn write_aux_files(compile_context: &CompileContext) -> io::Result<()> {
     // main.ts
     fs::write(join_paths("main.ts", &compile_context.output_dir), format!("{header}
 import * as $Densky$ from \"densky/runtime.ts\";
-import httpHandler from \"./http.main.ts\";
+import httpHandler from \"{http_main}\";
 
 $Densky$.HTTPResponse.viewsPath = \"{}\";
 
 export default async function requestHandler(req: $Densky$.HTTPResponse, conn: Deno.Conn): Promise<Response> {{
   return await httpHandler(req);
-}}", join_paths("views", &compile_context.output_dir)))?;
+}}", join_paths("views", &compile_context.output_dir), http_main = import_filename("./http.main.ts")))?;
 
     // http.main.ts
     fs::write(join_paths("http.main.ts", &compile_context.output_dir), format!("{header}
 import * as $Densky$ from \"densky/runtime.ts\";
-import mainHandler from \"./http/_index.ts\";
+import mainHandler from \"{http_index}\";
 
 function toResponse (
   req: $Densky$.HTTPRequest,
@@ -52,7 +52,7 @@ function toResponse (
 
 export default async function requestHandler(req: $Densky$.HTTPRequest): Promise<Response> {{
   return toResponse(req, await mainHandler(req) ?? new $Densky$.HTTPError($Densky$.StatusCode.NOT_FOUND));
-}}"))?;
+}}", http_index = import_filename("./http/_index.ts")))?;
 
     // worker.ts
     fs::write(
@@ -70,7 +70,7 @@ _self.onmessage = async (e: MessageEvent) => {{
   const req: HTTPRequest = new HTTPRequest(e.data.req);
 
   try {{
-    const m = await import(import.meta.resolve(\"./main.ts\")).then((m) =>
+    const m = await import(import.meta.resolve(\"{main}\")).then((m) =>
       m.default
     );
 
@@ -100,7 +100,8 @@ _self.onmessage = async (e: MessageEvent) => {{
 async function respond(id: number, res: Response) {{
   _self.postMessage({{ id, res: await HTTPResponse.prepareForWorker(res) }});
 }}
-"
+",
+            main = import_filename("./main.ts")
         ),
     )?;
 
@@ -110,12 +111,13 @@ async function respond(id: number, res: Response) {{
         format!(
             "{header}
 import {{ DevServer }} from \"densky/dev.ts\";
-import compileOptions from \"../config.ts\";
+import compileOptions from \"{config}\";
 
 const server = new DevServer({{ port: 8000, verbose: true }}, compileOptions);
 
 server.start();
-"
+",
+            config = import_filename("../config.ts")
         ),
     )?;
 

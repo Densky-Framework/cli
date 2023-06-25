@@ -19,6 +19,7 @@ use densky_core::{
 use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::compiler::{process_http, process_view, write_aux_files};
+use crate::progress;
 use crate::watcher::{PollWatcher, WatchKind};
 
 pub struct DevCommand;
@@ -62,18 +63,12 @@ impl DevCommand {
                 static_prefix: "static/".to_owned(),
             };
 
-            let progress = ProgressBar::new_spinner()
-                .with_message("Discovering")
-                .with_style(
-                    ProgressStyle::with_template("{spinner:.cyan} {msg:.bright.blue}")
-                        .unwrap()
-                        .tick_chars("⠁⠉⠙⠚⠒⠂⠂⠒⠲⠴⠤⠄⠄⠤⠠⠠⠤⠦⠖⠒⠐⠐⠒⠓⠋⠉✓"),
-                );
+            let progress = progress::create_spinner(Some("Discovering"));
 
             match write_aux_files(&compile_context) {
                 Ok(_) => (),
                 Err(_) => {
-                    first_build_tx.send(false);
+                    let _ = first_build_tx.send(false);
                     return None;
                 }
             };
@@ -84,15 +79,8 @@ impl DevCommand {
 
             progress.finish();
 
-            let progress = ProgressBar::new(http_container.id_tree() as u64)
-                .with_message("Compiling")
-                .with_style(
-                    ProgressStyle::with_template(
-                        "{human_pos:.green} / {human_len:.red} {msg:15} {wide_bar:.cyan/blue}",
-                    )
-                    .unwrap()
-                    .progress_chars("##-"),
-                );
+            // let progress = ProgressBar::new(http_container.id_tree() as u64)
+            let progress = progress::create_bar(http_container.id_tree(), "Compiling");
 
             process_http(
                 http_tree.clone(),
@@ -112,6 +100,20 @@ impl DevCommand {
 
             '_loop: loop {
                 if let Ok(event) = watch_event_rx.recv_timeout(Duration::from_millis(10)) {
+                    densky_core::utils::new_import_hash();
+                    let progress = progress::create_bar(http_container.id_tree(), "Compiling");
+
+                    write_aux_files(&compile_context).unwrap();
+
+                    process_http(
+                        http_tree.clone(),
+                        &mut http_container,
+                        Some(progress.clone()),
+                    );
+                    progress.finish();
+                    // for view in views {
+                    //     process_view(view);
+                    // }
                     DevCommand::send_update(event.iter().map(|e| (e.kind.clone(), &e.path)));
                 }
 
@@ -124,7 +126,13 @@ impl DevCommand {
             None
         });
 
-        let shutdown_threads = move || (shutdown_threads().unwrap(), watching.join().unwrap(), main.join().unwrap());
+        let shutdown_threads = move || {
+            (
+                shutdown_threads().unwrap(),
+                watching.join().unwrap(),
+                main.join().unwrap(),
+            )
+        };
 
         let successful = first_build_rx.recv().unwrap();
         if !successful {
