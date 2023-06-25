@@ -2,10 +2,12 @@ extern crate anstyle;
 
 pub mod commands;
 pub mod compiler;
+pub mod progress;
 pub mod watcher;
 
 use anstyle::{AnsiColor, Color, Style};
 use clap::{builder::Styles, command};
+use commands::BuildCommand;
 
 use crate::commands::DevCommand;
 
@@ -34,7 +36,8 @@ fn main() {
                 .valid(Style::new().fg_color(Some(Color::Ansi(AnsiColor::BrightGreen))))
                 .invalid(Style::new().fg_color(Some(Color::Ansi(AnsiColor::BrightRed)))),
         )
-        .subcommand(DevCommand::command());
+        .subcommand(DevCommand::command())
+        .subcommand(BuildCommand::command());
 
     #[cfg(not(debug_assertions))]
     {
@@ -45,6 +48,8 @@ fn main() {
 
     match matches.subcommand() {
         Some(("dev", sub_matches)) => DevCommand::process(sub_matches),
+        Some(("build", sub_matches)) => BuildCommand::process(sub_matches),
+
         Some((cmd_name, _)) => println!("Unknown command: {cmd_name}"),
         None => todo!("Main entry"),
     }
