@@ -10,15 +10,15 @@ use std::{
 };
 
 use clap::{arg, value_parser, ArgMatches, Command, ValueHint};
+use densky_core::manifest::Manifest;
 use densky_core::views::view_discover;
 use densky_core::{
     http::http_discover,
     utils::{join_paths, Fmt},
     CompileContext,
 };
-use indicatif::{ProgressBar, ProgressStyle};
 
-use crate::compiler::{process_http, process_view, write_aux_files};
+use crate::compiler::{process_view, write_aux_files};
 use crate::progress;
 use crate::watcher::{PollWatcher, WatchKind};
 
@@ -67,31 +67,26 @@ impl DevCommand {
 
             match write_aux_files(&compile_context) {
                 Ok(_) => (),
-                Err(_) => {
-                    let _ = first_build_tx.send(false);
+                Err(e) => {
+                    let _ = first_build_tx.send(Result::Err(e));
                     return None;
                 }
             };
-
-            let (mut http_container, http_tree) = http_discover(&compile_context).ok()?;
             progress.tick();
+
+            let (http_container, http_tree) = http_discover(&compile_context).ok()?;
+            progress.tick();
+
+            Manifest::update(&http_container, &compile_context).unwrap();
+            progress.tick();
+
             let views = view_discover(&compile_context);
 
-            progress.finish();
-
-            // let progress = ProgressBar::new(http_container.id_tree() as u64)
-            let progress = progress::create_bar(http_container.id_tree(), "Compiling");
-
-            process_http(
-                http_tree.clone(),
-                &mut http_container,
-                Some(progress.clone()),
-            );
             progress.finish();
             for view in views {
                 process_view(view);
             }
-            let _ = first_build_tx.send(true);
+            let _ = first_build_tx.send(Ok(()));
 
             println!(
                 "\x1B[2J\x1B[1;1H{}\n",
@@ -100,20 +95,15 @@ impl DevCommand {
 
             '_loop: loop {
                 if let Ok(event) = watch_event_rx.recv_timeout(Duration::from_millis(10)) {
-                    densky_core::utils::new_import_hash();
-                    let progress = progress::create_bar(http_container.id_tree(), "Compiling");
-
-                    write_aux_files(&compile_context).unwrap();
-
-                    process_http(
-                        http_tree.clone(),
-                        &mut http_container,
-                        Some(progress.clone()),
-                    );
-                    progress.finish();
+                    let (http_container, http_tree) = http_discover(&compile_context).ok()?;
+                    Manifest::update(&http_container, &compile_context).unwrap();
                     // for view in views {
                     //     process_view(view);
                     // }
+                    println!(
+                        "\x1B[2J\x1B[1;1H{}\n",
+                        Fmt(|f| http_tree.lock().unwrap().display(f, &http_container))
+                    );
                     DevCommand::send_update(event.iter().map(|e| (e.kind.clone(), &e.path)));
                 }
 
@@ -134,8 +124,9 @@ impl DevCommand {
             )
         };
 
-        let successful = first_build_rx.recv().unwrap();
-        if !successful {
+        let first_build = first_build_rx.recv().unwrap();
+        if let Err(e) = first_build {
+            eprintln!("Error on first build: {e}");
             let _ = shutdown_threads();
             return;
         }
