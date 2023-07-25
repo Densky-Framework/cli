@@ -47,8 +47,7 @@ impl BuildCommand {
         };
         progress.tick();
 
-        let (mut http_container, http_tree) =
-            http_discover(&compile_context).unwrap_or_else(|_| todo!("ERROR DISCOVERING MESSAGE"));
+        let (mut http_container, http_tree) = http_discover(&compile_context);
 
         progress.finish();
 

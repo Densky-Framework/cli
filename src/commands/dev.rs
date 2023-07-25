@@ -1,25 +1,27 @@
-use std::ffi::OsStr;
-use std::{path::PathBuf, thread, time::Duration};
 use std::{
+    ffi::OsStr,
+    path::PathBuf,
     process,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
+    thread,
+    time::Duration,
 };
 
+use crate::{
+    compiler::{process_view, write_aux_files},
+    progress,
+    watcher::{PollWatcher, WatchKind},
+};
 use clap::{arg, value_parser, ArgMatches, Command, ValueHint};
-use densky_core::manifest::Manifest;
-use densky_core::views::view_discover;
 use densky_core::{
     http::http_discover,
     utils::{join_paths, Fmt},
-    CompileContext,
+    views::view_discover,
+    CompileContext, Manifest,
 };
-
-use crate::compiler::{process_view, write_aux_files};
-use crate::progress;
-use crate::watcher::{PollWatcher, WatchKind};
 
 pub struct DevCommand;
 

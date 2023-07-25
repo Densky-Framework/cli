@@ -23,7 +23,7 @@ import httpHandler from \"{http_main}\";
 
 $Densky$.HTTPResponse.viewsPath = \"{}\";
 
-export default async function requestHandler(req: $Densky$.HTTPResponse, conn: Deno.Conn): Promise<Response> {{
+export default async function requestHandler(req: $Densky$.HTTPRequest, conn: Deno.Conn): Promise<Response> {{
   return await httpHandler(req);
 }}", join_paths("views", &compile_context.output_dir), http_main = import_filename("./http.main.ts")))?;
 
