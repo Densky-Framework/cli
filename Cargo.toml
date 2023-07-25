@@ -1,14 +1,23 @@
 [package]
-name = "cli"
+name = "densky"
+description = "Densky is the backend framework for Deno"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+homepage = "https://github.com/Densky-Framework/core"
+documentation = "https://docs.densky.apika.me"
+repository = "https://github.com/Densky-Framework/core"
+
+[[bin]]
+name = "densky"
+path = "src/main.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 anstyle = "1.0.0"
 clap = { version = "4.3.3", features = ["cargo", "unstable-styles"] }
-densky-core = { path = "../core" }
+densky-core = { version = "0.1.0", path = "../core" }
 
 ahash = "0.8.3"
 recv-dir = "0.2.0"
