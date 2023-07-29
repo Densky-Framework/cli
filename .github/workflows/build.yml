@@ -37,16 +37,18 @@ jobs:
             bin_name: densky-windows-x64.exe
             will_run: ${{ inputs.Windows }}
     runs-on: ${{ matrix.os }}
-    if: matrix.will_run
 
     steps:
     - uses: actions/checkout@v3
+      if: ${{ matrix.will_run }}
       with:
         submodules: true
     - name: Build
+      if: ${{ matrix.will_run }}
       run: cargo build --verbose --releas
 
     - uses: actions/upload-artifact@v3
+      if: ${{ matrix.will_run }}
       with:
         name: ${{ matrix.bin_name }}
         path: target/release/densky
