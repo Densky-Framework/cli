@@ -45,7 +45,7 @@ jobs:
         submodules: true
     - name: Build
       if: ${{ matrix.will_run }}
-      run: cargo build --verbose --releas
+      run: cargo build --verbose --release
 
     - uses: actions/upload-artifact@v3
       if: ${{ matrix.will_run }}
