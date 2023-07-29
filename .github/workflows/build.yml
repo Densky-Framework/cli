@@ -29,15 +29,15 @@ jobs:
         include:
           - os: ubuntu-latest
             bin_name: densky-linux-x64
-            run: ${{ inputs.Linux }}
+            will_run: ${{ inputs.Linux }}
           - os: macos-latest
             bin_name: densky-macos-x64
-            run: ${{ inputs.Macos }}
+            will_run: ${{ inputs.Macos }}
           - os: windows-latest
             bin_name: densky-windows-x64.exe
-            run: ${{ inputs.Windows }}
+            will_run: ${{ inputs.Windows }}
     runs-on: ${{ matrix.os }}
-    if: ${{ matrix.run }}
+    if: matrix.will_run
 
     steps:
     - uses: actions/checkout@v3
