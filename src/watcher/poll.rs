@@ -1,7 +1,10 @@
 use std::cell::RefCell;
 use std::fs;
 use std::io;
-use std::os::unix::prelude::MetadataExt;
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+#[cfg(windows)]
+use std::os::windows::fs::MetadataExt;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::thread;
@@ -20,7 +23,7 @@ pub enum WatchKind {
 }
 
 static MEGABYTE: u64 = 1000000;
-static FILE_SIZE_THRESHOLD: u64 = MEGABYTE * 20;
+static FILE_SIZE_THRESHOLD: u64 = MEGABYTE * 10;
 
 #[derive(Debug)]
 pub struct WatchEvent {
@@ -60,7 +63,15 @@ impl PollWatcher {
 
     pub fn get_hash(path: &PathBuf) -> u64 {
         let size = match fs::metadata(&path) {
+            #[cfg(unix)]
             Ok(m) => m.size(),
+
+            #[cfg(windows)]
+            Ok(m) => m.file_size(),
+
+            #[cfg(not(any(unix, windows)))]
+            Ok(_) => 0,
+
             Err(_) => 0,
         };
 
