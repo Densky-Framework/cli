@@ -1,0 +1,52 @@
+name: Build
+
+on: 
+  workflow_dispatch:
+    inputs:
+      Linux:
+        description: 'Build on Linux - Ubuntu'
+        required: false
+        type: boolean
+      Macos:
+        description: 'Build on Macos'
+        required: false
+        type: boolean
+      Windows:
+        description: 'Build on Windows'
+        required: false
+        type: boolean
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+      
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            bin_name: densky-linux-x64
+            run: ${{ inputs.Linux }}
+          - os: macos-latest
+            bin_name: densky-macos-x64
+            run: ${{ inputs.Macos }}
+          - os: windows-latest
+            bin_name: densky-windows-x64.exe
+            run: ${{ inputs.Windows }}
+    runs-on: ${{ matrix.os }}
+    if: ${{ matrix.run }}
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        submodules: true
+    - name: Build
+      run: cargo build --verbose --releas
+
+    - uses: actions/upload-artifact@v3
+      with:
+        name: ${{ matrix.bin_name }}
+        path: target/release/densky
